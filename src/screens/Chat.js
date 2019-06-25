@@ -3,24 +3,17 @@ import { ActivityIndicator, View, Button, TouchableOpacity, Dimensions, Alert, S
 import { GiftedChat, Send, Message } from 'react-native-gifted-chat';
 import { ChatManager, TokenProvider } from '@pusher/chatkit-client';
 import Icon from 'react-native-vector-icons/FontAwesome';
+import axios from 'axios';
 import Config from 'react-native-config';
 import { DocumentPicker, DocumentPickerUtil } from 'react-native-document-picker';
 import Modal from 'react-native-modal';
 import Pdf from 'react-native-pdf';
-import * as mime from 'react-native-mime-types';
-
-import RNFetchBlob from 'rn-fetch-blob';
-
-const Blob = RNFetchBlob.polyfill.Blob;
-const fs = RNFetchBlob.fs;
-window.XMLHttpRequest = RNFetchBlob.polyfill.XMLHttpRequest;
-window.Blob = Blob;
-
-import RNFS from 'react-native-fs';
 
 const CHATKIT_INSTANCE_LOCATOR_ID = Config.CHATKIT_INSTANCE_LOCATOR_ID;
 const CHATKIT_SECRET_KEY = Config.CHATKIT_SECRET_KEY;
 const CHATKIT_TOKEN_PROVIDER_ENDPOINT = Config.CHATKIT_TOKEN_PROVIDER_ENDPOINT;
+
+const CHAT_SERVER = 'YOUR NGROK HTTPS URL';
 
 import ChatBubble from '../components/ChatBubble';
 import AudioPlayer from '../components/AudioPlayer';
@@ -42,6 +35,8 @@ class Chat extends Component {
     is_viewing_pdf: false,
     pdf_source: null,
 
+    uploaded_media_url: null,
+    uploaded_media_type: null
   };
 
 
@@ -110,9 +105,9 @@ class Chat extends Component {
   }
 
 
-  getMessage = async ({ id, sender, parts, createdAt }) => {
+  getMessage = ({ id, sender, parts, createdAt }) => {
     const text = parts.find(part => part.partType === 'inline').payload.content;
-    const url_part = parts.find(part => part.partType === 'attachment') ? parts.find(part => part.partType === 'attachment').payload : null;
+    const url_part = parts.find(part => part.partType === 'url') ? parts.find(part => part.partType === 'url').payload : null;
 
     let msg_data = {
       _id: id,
@@ -128,7 +123,7 @@ class Chat extends Component {
     if (url_part) {
       msg_data.attachment = url_part;
       if (image_filetypes.includes(url_part.type)) {
-        msg_data.image = await url_part.url();
+        msg_data.image = url_part.url;
       }
     }
 
@@ -298,23 +293,11 @@ class Chat extends Component {
 
 
   onSend = async ([message]) => {
-    const { has_attachment } = this.state;
-    let message_parts = [
-      { type: "text/plain", content: message.text }
+    const { uploaded_media_type, uploaded_media_url } = this.state;
+    const message_parts = [
+      { type: "text/plain", content: message.text },
+      { type: uploaded_media_type, url: uploaded_media_url }
     ];
-
-    if (has_attachment) {
-      const { file_blob, file_name, file_type } = this.attachment;
-      message_parts.push({
-        file: file_blob,
-        name: file_name,
-        type: file_type
-      });
-    }
-
-    this.setState({
-      is_sending: true
-    });
 
     try {
       await this.currentUser.sendMultipartMessage({
@@ -322,11 +305,10 @@ class Chat extends Component {
         parts: message_parts
       });
 
-      this.attachment = null;
-
       this.setState({
-        has_attachment: false,
-        is_sending: false
+        uploaded_media_type: null,
+        uploaded_media_url: null,
+        has_attachment: false
       });
     } catch (send_msg_err) {
       console.log("error sending message: ", send_msg_err);
@@ -355,6 +337,7 @@ class Chat extends Component {
       <ActivityIndicator size="small" color="#0064e1" style={styles.loader} />
     );
   }
+
   //
 
   openFilePicker = async () => {
@@ -368,26 +351,37 @@ class Chat extends Component {
 
       if (!err) {
         try {
-          const file_type = mime.contentType(file.fileName);
-          const base64 = await RNFS.readFile(file.uri, "base64");
+          const data = new FormData();
 
-          const file_blob = await Blob.build(base64, { type: `${file_type};BASE64` });
+          data.append('fileData', {
+            uri : file.uri,
+            type: file.type,
+            name: file.fileName
+          });
 
-          this.attachment = {
-            file_blob: file_blob,
-            file_name: file.fileName,
-            file_type: file_type
-          };
+          const upload_instance = axios.create({
+            baseURL: CHAT_SERVER,
+            timeout: 20000,
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'multipart/form-data',
+            }
+          });
 
-          Alert.alert("Success", "File attached!");
-
+          const res = await upload_instance.post('/upload', data);
           this.setState({
+            uploaded_media_type: res.data.type,
+            uploaded_media_url: res.data.url,
             is_picking_file: false,
             has_attachment: true
           });
 
-        } catch (attach_err) {
-          console.log("error attaching file: ", attach_err);
+        } catch (read_file_err) {
+          Alert.alert("Invalid file", "File shouldn't exceed 10mb and it should be a valid video, audio, document, or image file.");
+          this.setState({
+            is_picking_file: false,
+            has_attachment: false
+          });
         }
       } else {
         this.setState({
