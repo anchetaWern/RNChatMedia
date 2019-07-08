@@ -1,6 +1,8 @@
 # RNChatMedia
 A React Native Chat app which uploads files to a Node.js server.
 
+You can read the tutorial at: [https://pusher.com/tutorials/media-conversion-react-native](https://pusher.com/tutorials/media-conversion-react-native)
+
 ### Prerequisites
 
 -   React Native development environment
